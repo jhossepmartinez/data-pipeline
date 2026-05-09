@@ -30,6 +30,26 @@ Northwind SQLite (solo lectura, montado como volumen)
 
 ---
 
+## Decisiones de diseño
+
+- **CLI → API REST:** El pipeline empezó como script CLI. Se agregó FastAPI para poder exponer endpoints de monitoreo (`/orders`, `/exceptions`) y para que un revisor pueda ver el flujo completo sin depender de la terminal.
+
+- **Northwind SQLite como solo lectura:** Se eligió no mutar la base fuente. Las órdenes de demo se construyen **en memoria** (`build_demo_source_orders()`) y se inyectan al pipeline como `extra_orders`. Esto preserva la integridad del archivo descargado.
+
+- **Verificación de hash SHA-256:** Se agregó `verify_northwind_hash()` antes de leer el SQLite. El revisor debe descargar manualmente `northwind.db`; si sube un archivo corrupto, el pipeline falla con un mensaje claro.
+
+- **Alembic para migraciones:** Se prefirió Alembic sobre `Base.metadata.create_all()` para mantener un historial versionado del schema. Esto permite rollback y trazabilidad del modelo canónico.
+
+- **Demo orders para forzar excepciones:** Las 16,282 órdenes de Northwind son todas válidas. Se agregaron 5 órdenes demo corruptas para que el revisor pueda verificar que las reglas de negocio realmente detectan y reportan errores.
+
+- **`seed-errors` vs `reset-and-seed`:** `seed-errors` es idempotente y solo procesa las 5 órdenes demo (sin re-leer Northwind). `reset-and-seed` es destructivo: trunca PostgreSQL y corre el pipeline completo. Se separaron para tener una opción segura y una opción de demo desde cero.
+
+- **Idempotencia con `ON CONFLICT DO NOTHING`:** El pipeline usa `source_order_id` como clave única. Correr `/ingest` o `/demo/seed-errors` dos veces no duplica datos.
+
+- **Docker-only:** Todo corre dentro de contenedores. El revisor no necesita instalar Python, uv ni PostgreSQL localmente.
+
+---
+
 ## Requisitos
 
 - Docker + Docker Compose
