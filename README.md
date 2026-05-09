@@ -154,6 +154,7 @@ X-API-Key: dev-key
 ```bash
 # Paso 1: Resetear target + seedear ordenes invalidas de demostracion
 # ATENCION: esto BORRA todos los datos existentes en PostgreSQL
+# Toma cerca de 2 minutos en finalizar
 curl -X POST -H "X-API-Key: dev-key" http://localhost:8000/demo/reset-and-seed | jq
 # Esperado: {"read":16287,"valid":16282,"invalid":5,"inserted":16287,"skipped":0,"orders":[900001,...]}
 
