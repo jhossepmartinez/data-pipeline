@@ -1,2 +1,4 @@
 instructions.md
 data/raw/northwind.db
+.env
+data/raw/ola.txt

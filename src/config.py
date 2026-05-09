@@ -11,6 +11,9 @@ class Config:
         "postgresql+psycopg2://pipeline_user:pipeline_pass@localhost:5433/pipeline_db",
     )
     SOURCE_DB_PATH: str = os.getenv("SOURCE_DB_PATH", "data/raw/northwind.db")
+    SOURCE_DB_HASH_PATH: str = os.getenv(
+        "SOURCE_DB_HASH_PATH", "data/raw/northwind.db.sha256"
+    )
     API_KEY: str = os.getenv("API_KEY", "dev-key")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
 

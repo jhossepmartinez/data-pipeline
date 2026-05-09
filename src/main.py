@@ -1,3 +1,4 @@
+import argparse
 import logging
 from decimal import Decimal
 
@@ -14,6 +15,8 @@ from src.pipeline.validate_discounts import validate_line_discounts
 from src.pipeline.validate import validate_order_total
 from src.pipeline.persist import persist_orders
 from src.pipeline.demo_corruption import apply_demo_corruption
+from src.pipeline.northwind_verify import verify_northwind_hash
+from src.api.demo_seeder import build_demo_source_orders
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,10 +27,15 @@ logging.basicConfig(
 def run_pipeline(
     limit: int | None = None,
     extra_orders: list[SourceOrder] | None = None,
+    skip_source_read: bool = False,
 ) -> dict:
     """Orquesta el pipeline completo: ingest -> validate-source -> dedupe -> normalize -> consistency-checks -> persist."""
-    with get_source_session() as source_session:
-        raw_orders = fetch_orders(source_session, limit=limit)
+    verify_northwind_hash()
+    if skip_source_read:
+        raw_orders = []
+    else:
+        with get_source_session() as source_session:
+            raw_orders = fetch_orders(source_session, limit=limit)
     if extra_orders:
         raw_orders = raw_orders + extra_orders
     print(f"Ingest: {len(raw_orders)} ordenes leidas de SQLite")
@@ -145,4 +153,19 @@ def run_pipeline(
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    parser = argparse.ArgumentParser(description="Northwind Pipeline")
+    parser.add_argument(
+        "--with-demo",
+        action="store_true",
+        help="Incluir 5 ordenes de demostracion invalidas para verificar deteccion de errores",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limitar la cantidad de ordenes a procesar",
+    )
+    args = parser.parse_args()
+
+    extra = build_demo_source_orders() if args.with_demo else None
+    run_pipeline(limit=args.limit, extra_orders=extra)

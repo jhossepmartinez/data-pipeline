@@ -103,7 +103,8 @@ def trigger_seed_errors(
     api_key: str = Depends(verify_api_key),
 ):
     demo_orders = build_demo_source_orders()
-    result = run_pipeline(extra_orders=demo_orders)
+    # Solo procesar las ordenes demo, sin re-leer Northwind
+    result = run_pipeline(extra_orders=demo_orders, skip_source_read=True)
     return SeedErrorsResponse(
         inserted=result["inserted"],
         skipped=result["skipped"],

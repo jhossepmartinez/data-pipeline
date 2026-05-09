@@ -736,6 +736,378 @@ curl -X POST -H "X-API-Key: dev-key" http://localhost:8000/demo/seed-errors | jq
 
 ---
 
+## 3.13. `src/pipeline/northwind_verify.py` — Verificacion de hash SHA-256
+
+**Objetivo:** Garantizar que el archivo `northwind.db` no fue mutado y coincide con la version esperada. El pipeline falla con un mensaje claro si el hash no matchea.
+
+**Codigo final:**
+```python
+import hashlib
+import logging
+from pathlib import Path
+
+from src.config import config
+
+logger = logging.getLogger(__name__)
+
+
+def _compute_sha256(file_path: Path) -> str:
+    """Calcula el SHA-256 de un archivo."""
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_northwind_hash() -> None:
+    """
+    Verifica que el hash SHA-256 de northwind.db coincida con el valor esperado.
+
+    Raises:
+        RuntimeError: si el archivo de hash esperado no existe o los hashes no coinciden.
+    """
+    db_path = Path(config.SOURCE_DB_PATH).resolve()
+    hash_file = Path(config.SOURCE_DB_HASH_PATH).resolve()
+
+    if not db_path.exists():
+        logger.error("Northwind DB no encontrado: %s", db_path)
+        raise RuntimeError(
+            f"Northwind DB no encontrado: {db_path}\n"
+            "Descargalo desde: https://raw.githubusercontent.com/jpwhite3/northwind-SQLite3/"
+            "4f56e7f5906dfd23b25244c5bfe8fb5da6402efd/dist/northwind.db"
+        )
+
+    if not hash_file.exists():
+        logger.error("Archivo de hash esperado no encontrado: %s", hash_file)
+        raise RuntimeError(
+            f"Archivo de hash esperado no encontrado: {hash_file}\n"
+            "Asegurate de que el repo incluya data/raw/northwind.db.sha256"
+        )
+
+    expected_hash = hash_file.read_text().strip().split()[0]
+    actual_hash = _compute_sha256(db_path)
+
+    if expected_hash != actual_hash:
+        logger.error(
+            "Hash mismatch para Northwind DB.\n"
+            "  Esperado: %s\n"
+            "  Actual:   %s\n"
+            "  Archivo:  %s",
+            expected_hash, actual_hash, db_path,
+        )
+        raise RuntimeError(
+            f"Hash mismatch para Northwind DB.\n"
+            f"  Esperado: {expected_hash}\n"
+            f"  Actual:   {actual_hash}\n"
+            f"El archivo descargado no coincide con la version esperada. "
+            f"Descargalo desde: https://raw.githubusercontent.com/jpwhite3/"
+            f"northwind-SQLite3/4f56e7f5906dfd23b25244c5bfe8fb5da6402efd/dist/northwind.db"
+        )
+
+    logger.info("Northwind DB verificado correctamente. Hash: %s", actual_hash)
+```
+
+---
+
+### 3.14. `data/raw/northwind.db.sha256` — Hash esperado
+
+**Contenido:**
+```
+2f4f5c68dfcd33ba27373eae48c7a4869800c68095ee0f9f0da494f83382a877  data/raw/northwind.db
+```
+
+**Como regenerar:**
+```bash
+sha256sum data/raw/northwind.db > data/raw/northwind.db.sha256
+```
+
+---
+
+### 3.15. `src/config.py` — Agregar `SOURCE_DB_HASH_PATH`
+
+**Cambio:**
+```python
+    SOURCE_DB_HASH_PATH: str = os.getenv(
+        "SOURCE_DB_HASH_PATH", "data/raw/northwind.db.sha256"
+    )
+```
+
+---
+
+### 3.16. `src/main.py` — Llamar `verify_northwind_hash()` al inicio del pipeline
+
+**Cambio:**
+```python
+from src.pipeline.northwind_verify import verify_northwind_hash
+
+
+def run_pipeline(...):
+    verify_northwind_hash()  # <-- primera operacion
+    with get_source_session() as source_session:
+        ...
+```
+
+---
+
+### 3.17. `tests/` — Test de hash verification
+
+**Crear `tests/test_northwind_verify.py`:**
+
+```python
+import pytest
+from pathlib import Path
+from unittest.mock import patch
+
+from src.pipeline.northwind_verify import verify_northwind_hash
+
+
+class TestNorthwindVerify:
+    def test_verify_passes_with_correct_hash(self):
+        # No deberia lanzar excepcion con el archivo correcto
+        verify_northwind_hash()
+
+    def test_verify_fails_with_wrong_hash(self, tmp_path):
+        # Crear un hash file con valor incorrecto
+        bad_hash_file = tmp_path / "northwind.db.sha256"
+        bad_hash_file.write_text("0000000000000000000000000000000000000000000000000000000000000000")
+
+        with patch("src.pipeline.northwind_verify.config.SOURCE_DB_HASH_PATH", str(bad_hash_file)):
+            with pytest.raises(RuntimeError, match="Hash mismatch"):
+                verify_northwind_hash()
+
+    def test_verify_fails_when_db_missing(self, tmp_path):
+        bad_db_path = tmp_path / "nonexistent.db"
+        with patch("src.pipeline.northwind_verify.config.SOURCE_DB_PATH", str(bad_db_path)):
+            with pytest.raises(RuntimeError, match="no encontrado"):
+                verify_northwind_hash()
+
+    def test_verify_fails_when_hash_file_missing(self, tmp_path):
+        bad_hash_path = tmp_path / "nonexistent.sha256"
+        with patch("src.pipeline.northwind_verify.config.SOURCE_DB_HASH_PATH", str(bad_hash_path)):
+            with pytest.raises(RuntimeError, match="no encontrado"):
+                verify_northwind_hash()
+```
+
+---
+
+### 3.18. `Dockerfile` — Incluir Alembic para migraciones automaticas
+
+**Cambio:** Copiar `alembic/` y `alembic.ini` al contenedor.
+
+**Codigo final:**
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install uv for faster dependency management
+RUN pip install --no-cache-dir uv
+
+# Copy dependency files
+COPY pyproject.toml .
+
+# Install dependencies using uv (falls back to pip if needed)
+RUN uv pip install --system -e ".[dev]"
+
+# Copy application source
+COPY src/ ./src/
+COPY tests/ ./tests/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
+COPY data/raw/northwind.db.sha256 ./data/raw/northwind.db.sha256
+
+# Create mount point for northwind.db (volume will override at runtime)
+RUN mkdir -p /app/data/raw
+
+# Default entrypoint runs the pipeline
+CMD ["python", "-m", "src.main"]
+```
+
+---
+
+### 3.19. `docker-compose.yml` — Migraciones automaticas via Alembic
+
+**Objetivo:** Cada servicio corre `alembic upgrade head` antes de su comando principal.
+
+**Codigo final:**
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pipeline_user
+      POSTGRES_PASSWORD: pipeline_pass
+      POSTGRES_DB: pipeline_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline_user -d pipeline_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: postgresql+psycopg2://pipeline_user:pipeline_pass@db:5432/pipeline_db
+      SOURCE_DB_PATH: data/raw/northwind.db
+      SOURCE_DB_HASH_PATH: data/raw/northwind.db.sha256
+      API_KEY: dev-key
+      API_PORT: 8000
+    depends_on:
+      db:
+        condition: service_healthy
+
+  pipeline:
+    build: .
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m src.main"
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: postgresql+psycopg2://pipeline_user:pipeline_pass@db:5432/pipeline_db
+      SOURCE_DB_PATH: data/raw/northwind.db
+      SOURCE_DB_HASH_PATH: data/raw/northwind.db.sha256
+    depends_on:
+      db:
+        condition: service_healthy
+
+  test:
+    build: .
+    command: >
+      sh -c "alembic upgrade head &&
+             pytest -v"
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: postgresql+psycopg2://pipeline_user:pipeline_pass@db:5432/pipeline_db
+      SOURCE_DB_PATH: data/raw/northwind.db
+      SOURCE_DB_HASH_PATH: data/raw/northwind.db.sha256
+      API_KEY: test-key
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+```
+
+---
+
+### 3.20. `README.md` — Actualizar flujo para Docker-only
+
+**Cambios principales:**
+- Reemplazar todos los comandos `uv run` por `docker compose run --rm` o `docker compose up -d`.
+- Eliminar paso de "crear tablas manualmente" (Alembic lo hace automaticamente).
+- Agregar seccion de comandos Docker utiles.
+
+**Ver archivo `README.md` actual para codigo completo.**
+
+---
+
+## 4. Archivos que NO se tocan
+
+| Archivo | Por que |
+|---------|---------|
+| `src/pipeline/demo_corruption.py` | Es correcto. Corrompe ordenes demo post-normalizacion. |
+| `src/pipeline/dedupe.py` | `check_canonical_duplicate_lines` es necesario para R2. |
+| `src/pipeline/assign_currency.py` | `DEMO-R7` → EUR es necesario para que R7 falle. |
+| `src/pipeline/validate_source.py` | Sin cambios. |
+| `src/pipeline/validate.py` | Sin cambios. |
+| `src/pipeline/validate_discounts.py` | Sin cambios. |
+| `src/pipeline/validate_currency.py` | Sin cambios. |
+| `src/pipeline/normalize.py` | Sin cambios. |
+| `src/pipeline/ingest.py` | Sin cambios. |
+| `src/pipeline/persist.py` | Sin cambios. |
+| `src/pipeline/mock_rates.py` | Sin cambios. |
+| `src/models/source.py` | Sin cambios. |
+| `src/models/canonical.py` | Sin cambios. |
+| `src/api/main.py` | Sin cambios. |
+| `src/api/auth.py` | Sin cambios. |
+
+---
+
+## 5. Tests que deben pasar
+
+Ejecutar dentro de Docker:
+```bash
+docker compose run --rm test
+```
+
+**Esperado: 53 tests passed.** (49 anteriores + 4 nuevos de hash verification)
+
+Las migraciones de Alembic se ejecutan automaticamente antes de pytest (ver `docker-compose.yml`).
+
+---
+
+## 6. Verificacion manual
+
+### Flujo de Pablo (clona, levanta, prueba) — Todo en Docker
+
+```bash
+# 1. Clonar
+git clone <repo-url> && cd data-pipeline
+
+# 2. Descargar Northwind SQLite MANUALMENTE (no esta en el repo)
+mkdir -p data/raw
+curl -L -o data/raw/northwind.db \
+  https://raw.githubusercontent.com/jpwhite3/northwind-SQLite3/\
+4f56e7f5906dfd23b25244c5bfe8fb5da6402efd/dist/northwind.db
+
+# 3. Levantar PostgreSQL
+docker compose up -d db
+
+# 4. Correr tests (Alembic corre migraciones automaticamente antes de pytest)
+docker compose run --rm test
+# Esperado: 53 tests passed
+
+# 5. Correr pipeline
+docker compose run --rm pipeline
+
+# 6. Levantar API
+docker compose up -d api
+
+# 7. Resetear target + seedear ordenes demo + correr pipeline
+#    (un solo comando para ver todo desde cero)
+curl -X POST -H "X-API-Key: dev-key" http://localhost:8000/demo/reset-and-seed | jq
+
+# 8. Ver ordenes invalidas generadas por las reglas de negocio
+curl -H "X-API-Key: dev-key" "http://localhost:8000/orders?status=invalid" | jq
+
+# 9. Ver excepciones por regla
+curl -H "X-API-Key: dev-key" "http://localhost:8000/exceptions" | jq
+
+# 10. Si el hash no matchea, el pipeline falla con mensaje claro:
+#     RuntimeError: Hash mismatch para Northwind DB.
+#       Esperado: 2f4f5c68dfcd33ba27373eae48c7a4869800c68095ee0f9f0da494f83382a877
+#       Actual:   <hash-del-archivo-incorrecto>
+```
+
+### Flujo idempotente (sin reset)
+
+```bash
+# Seedear sin borrar (anade a lo existente)
+curl -X POST -H "X-API-Key: dev-key" http://localhost:8000/demo/seed-errors | jq
+# {"inserted":5,"skipped":0,"orders":[900001,900002,900003,900004,900005]}
+
+# Segunda vez: 0 insertadas, 5 skipped (idempotente)
+curl -X POST -H "X-API-Key: dev-key" http://localhost:8000/demo/seed-errors | jq
+# {"inserted":0,"skipped":5,"orders":[900001,900002,900003,900004,900005]}
+```
+
+---
+
 ## 7. Principios que se respetan
 
 1. **SQLite es solo lectura:** `build_demo_source_orders()` nunca toca una base de datos.
@@ -744,3 +1116,4 @@ curl -X POST -H "X-API-Key: dev-key" http://localhost:8000/demo/seed-errors | jq
 4. **Idempotencia:** `/demo/seed-errors` usa `on_conflict_do_nothing`. Segunda llamada = 0 insertadas.
 5. **Destructivo explicito:** `/demo/reset-and-seed` deja claro en el path que trunca datos.
 6. **Tests limpios:** `test_api.py` usa solo SQLite en memoria para el target.
+7. **Integridad de fuente:** `verify_northwind_hash()` garantiza que el revisor uso el archivo correcto antes de procesar.
