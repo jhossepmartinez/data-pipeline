@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv/
+venv/
+ENV/
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+compose.yml
+.dockerignore
+
+# Data (mounted via volume, not copied into image)
+data/raw/northwind.db
+*.db
+
+# Tests/CI (optional for production image)
+tests/
+.pytest_cache/
