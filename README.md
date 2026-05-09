@@ -73,8 +73,6 @@ cd data-pipeline
 **No incluimos `northwind.db` en el repo.** Debes descargarlo manualmente para garantizar que usas la version esperada.
 
 ```bash
-# Crear directorio si no existe
-mkdir -p data/raw
 
 # Descargar desde el repo oficial
 curl -L -o data/raw/northwind.db \
