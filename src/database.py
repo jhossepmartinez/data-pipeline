@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from src.config import config
 
@@ -12,7 +13,15 @@ source_engine = create_engine(
 )
 
 # Engine 2: PostgreSQL (Target - Lectura/Escritura)
-target_engine = create_engine(config.DATABASE_URL, echo=False)
+if config.DATABASE_URL.startswith("sqlite"):
+    target_engine = create_engine(
+        config.DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        echo=False,
+    )
+else:
+    target_engine = create_engine(config.DATABASE_URL, echo=False)
 
 # Session makers
 SourceSessionLocal = sessionmaker(bind=source_engine)

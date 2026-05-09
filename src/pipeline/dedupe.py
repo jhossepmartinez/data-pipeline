@@ -1,5 +1,5 @@
 from src.models.source import SourceOrder
-from src.models.canonical import ValidationException
+from src.models.canonical import Order, ValidationException
 
 
 def check_duplicate_lines(source_order: SourceOrder) -> list[ValidationException]:
@@ -23,6 +23,33 @@ def check_duplicate_lines(source_order: SourceOrder) -> list[ValidationException
                 order_id=None,
                 rule_name="DUPLICATE_LINE_ITEMS",
                 message=f"Duplicate ProductIDs: {sorted(duplicates)}",
+                severity="error",
+            )
+        ]
+    return []
+
+
+def check_canonical_duplicate_lines(order: Order) -> list[ValidationException]:
+    """
+    Detecta lineas duplicadas en el modelo canonico.
+
+    Si un product_id aparece 2+ veces en las lineas de la orden canonica,
+    la orden es invalida.
+    """
+    seen: set[int] = set()
+    duplicates: set[int] = set()
+
+    for line in order.lines:
+        if line.product_id in seen:
+            duplicates.add(line.product_id)
+        seen.add(line.product_id)
+
+    if duplicates:
+        return [
+            ValidationException(
+                order_id=order.id,
+                rule_name="DUPLICATE_LINE_ITEMS",
+                message=f"Duplicate ProductIDs in canonical lines: {sorted(duplicates)}",
                 severity="error",
             )
         ]

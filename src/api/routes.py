@@ -4,9 +4,17 @@ from typing import Optional
 
 from src.database import get_target_session
 from src.api.auth import verify_api_key
-from src.api.schemas import OrderResponse, ExceptionResponse, IngestResponse
+from src.api.schemas import (
+    OrderResponse,
+    ExceptionResponse,
+    IngestResponse,
+    SeedErrorsResponse,
+    ResetAndSeedResponse,
+)
 from src.models.canonical import Order, ValidationException
 from src.main import run_pipeline
+from src.api.demo_seeder import build_demo_source_orders
+from src.pipeline.reset_target import reset_target_db
 
 router = APIRouter()
 
@@ -87,4 +95,35 @@ def trigger_ingest(
         invalid=stats.get("invalid", 0),
         inserted=stats.get("inserted", 0),
         skipped=stats.get("skipped", 0),
+    )
+
+
+@router.post("/demo/seed-errors", response_model=SeedErrorsResponse)
+def trigger_seed_errors(
+    api_key: str = Depends(verify_api_key),
+):
+    demo_orders = build_demo_source_orders()
+    result = run_pipeline(extra_orders=demo_orders)
+    return SeedErrorsResponse(
+        inserted=result["inserted"],
+        skipped=result["skipped"],
+        orders=[o.OrderID for o in demo_orders],
+    )
+
+
+@router.post("/demo/reset-and-seed", response_model=ResetAndSeedResponse)
+def trigger_reset_and_seed(
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    reset_target_db(db)
+    demo_orders = build_demo_source_orders()
+    result = run_pipeline(extra_orders=demo_orders)
+    return ResetAndSeedResponse(
+        read=result["read"],
+        valid=result["valid"],
+        invalid=result["invalid"],
+        inserted=result["inserted"],
+        skipped=result["skipped"],
+        orders=[o.OrderID for o in demo_orders],
     )

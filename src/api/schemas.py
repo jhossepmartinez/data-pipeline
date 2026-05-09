@@ -51,3 +51,18 @@ class IngestResponse(BaseModel):
     invalid: int
     inserted: int
     skipped: int
+
+
+class SeedErrorsResponse(BaseModel):
+    inserted: int
+    skipped: int
+    orders: List[int]
+
+
+class ResetAndSeedResponse(BaseModel):
+    read: int
+    valid: int
+    invalid: int
+    inserted: int
+    skipped: int
+    orders: List[int]
